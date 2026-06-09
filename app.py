@@ -211,7 +211,9 @@ if run_button:
     try:
         # 往前推 10 天，確保能抓到最新一個交易日的官方結算數據
         fm_start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
-        fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPERatingDividendYields&data_id={}&start_date={}".format(stock_id, fm_start_date)
+        
+        # ⚠️ 修正重點 1：正確的 dataset 名稱為 TaiwanStockPER
+        fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={}&start_date={}".format(stock_id, fm_start_date)
         fm_res = requests.get(fm_url, timeout=5)
         fm_data = fm_res.json()
         
@@ -219,7 +221,8 @@ if run_button:
             latest_fun = fm_data['data'][-1] # 取陣列最後一筆 (最新)
             per = latest_fun.get('PER')
             pbr = latest_fun.get('PBR')
-            dy = latest_fun.get('DividendYield')
+            # ⚠️ 修正重點 2：正確的 JSON 鍵值為 dividend_yield
+            dy = latest_fun.get('dividend_yield') 
             
             pe_ratio_str = "{:.2f} 倍".format(per) if per else "N/A"
             pb_ratio_str = "{:.2f} 倍".format(pbr) if pbr else "N/A"
