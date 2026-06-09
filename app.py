@@ -23,7 +23,7 @@ st.title("📈 台股 NLP 多因子 AI 預測系統")
 st.markdown("---")
 
 # ---------------------------------------------------------
-# 🛠️ 解決 Matplotlib 中文顯示問題 (使用 st.cache_resource 避免重複下載)
+# 🛠️ 解決 Matplotlib 中文顯示問題
 # ---------------------------------------------------------
 @st.cache_resource
 def setup_font():
@@ -57,14 +57,14 @@ st.sidebar.markdown("---")
 st.sidebar.info("💡 **操作提示**\n\n輸入代號後，點擊上方「開始分析」按鈕，系統將自動抓取兩年期數據、籌碼與新聞情緒進行 AI 預測。")
 
 # =========================================================
-# 核心運算區塊 (按下按鈕後才會執行)
+# 核心運算區塊
 # =========================================================
 if run_button:
     ticker_symbol = ticker_symbol.strip().upper()
 
-    with st.spinner('🔄 正在啟動 NLP 多因子量化引擎，下載 {} 兩年期大數據與訓練模型中，請稍候...'.format(ticker_symbol)):
+    with st.spinner('🔄 正在啟動 NLP 多因子量化引擎，下載 {} 大數據與訓練模型中...'.format(ticker_symbol)):
         
-        # 1. 標的設定與基本面資料抓取 (加入防擋 IP 偽裝)
+        # 1. 標的設定與股價資料抓取
         yf_session = requests.Session()
         yf_session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -78,7 +78,7 @@ if run_button:
             st.stop()
 
         stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
-        current_price = stock_data['Close'].iloc[-1] # 取得最新收盤價
+        current_price = stock_data['Close'].iloc[-1] 
 
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
         try:
@@ -201,32 +201,37 @@ if run_button:
     st.markdown("---")
     st.subheader("📄 決策指揮中心 (分析基準: {})".format(history_last_date.strftime('%Y-%m-%d')))
 
-    # 🌟 修正版：基本面評估 (手動精算避免 API 錯誤)
-    st.markdown("#### 💰 基本面評估")
-    info = ticker.info
-    eps = info.get('trailingEPS', 0)
-    pe_ratio = (current_price / eps) if (eps and eps > 0) else info.get('trailingPE', 0)
-    book_value = info.get('bookValue', 0)
-    pb_ratio = (current_price / book_value) if (book_value and book_value > 0) else info.get('priceToBook', 0)
-
+    # 🌟 徹底修正版：完全捨棄 yfinance，改用 FinMind 官方真實財報數據
+    st.markdown("#### 💰 基本面評估 (資料來源：台灣證交所/櫃買中心)")
+    
+    pe_ratio_str = "N/A"
+    pb_ratio_str = "N/A"
+    div_yield_str = "N/A"
+    
     try:
-        divs = ticker.dividends
-        if not divs.empty:
-            divs.index = divs.index.tz_localize(None)
-            recent_divs = divs[divs.index > (datetime.now() - timedelta(days=365))]
-            total_dividend = recent_divs.sum()
-            div_yield = (total_dividend / current_price) * 100
-        else:
-            raw_yield = info.get('dividendYield')
-            div_yield = (raw_yield * 100) if raw_yield else 0.0
-    except:
-        div_yield = 0.0
+        # 往前推 10 天，確保能抓到最新一個交易日的官方結算數據
+        fm_start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
+        fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPERatingDividendYields&data_id={}&start_date={}".format(stock_id, fm_start_date)
+        fm_res = requests.get(fm_url, timeout=5)
+        fm_data = fm_res.json()
+        
+        if fm_data.get('msg') == 'success' and len(fm_data.get('data', [])) > 0:
+            latest_fun = fm_data['data'][-1] # 取陣列最後一筆 (最新)
+            per = latest_fun.get('PER')
+            pbr = latest_fun.get('PBR')
+            dy = latest_fun.get('DividendYield')
+            
+            pe_ratio_str = "{:.2f} 倍".format(per) if per else "N/A"
+            pb_ratio_str = "{:.2f} 倍".format(pbr) if pbr else "N/A"
+            div_yield_str = "{:.2f} %".format(dy) if dy else "N/A"
+    except Exception as e:
+        pass
 
     col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("最新收盤價", "{:.2f} 元".format(current_price))
-    col_b.metric("本益比 (PE)", "{:.2f} 倍".format(pe_ratio) if pe_ratio else "N/A")
-    col_c.metric("淨值比 (PB)", "{:.2f} 倍".format(pb_ratio) if pb_ratio else "N/A")
-    col_d.metric("預估殖利率", "{:.2f} %".format(div_yield) if div_yield else "N/A")
+    col_b.metric("本益比 (PE)", pe_ratio_str)
+    col_c.metric("淨值比 (PB)", pb_ratio_str)
+    col_d.metric("官方殖利率", div_yield_str)
 
     st.markdown("---")
     col1, col2 = st.columns(2)
