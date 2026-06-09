@@ -1,9 +1,6 @@
 # =========================================================
 # 1. 載入所需套件 (🌟 新增 snownlp 用於中文 NLP 情緒分析)
 # =========================================================
-# ⚠️ 修正說明：已移除原本的 !pip install 指令，避免在 Streamlit 引發 SyntaxError。
-# 請務必在與 app.py 相同目錄下建立 `requirements.txt` 來安裝套件。
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -121,7 +118,7 @@ try:
 except Exception as e:
     news_display_text.append(f"   ⚠️ NLP 新聞模組發生異常。")
 
-# 建立歷史情緒模擬 (因無法瞬間爬取兩年新聞，以價格動能與籌碼生成關聯性特徵)
+# 建立歷史情緒模擬
 df_merged['Sentiment'] = 0.5 + (df_merged['Close'].pct_change().fillna(0) * 2) + (df_merged['Net_Buy_K'] / 10000)
 df_merged['Sentiment'] = df_merged['Sentiment'].clip(0, 1) # 限制在 0~1 之間
 df_merged.iloc[-1, df_merged.columns.get_loc('Sentiment')] = recent_news_sentiment # 最新一天帶入真實 NLP 分數
@@ -148,7 +145,7 @@ model.fit(df_prophet)
 future = model.make_future_dataframe(periods=30)
 future = future[future['ds'].dt.weekday < 5] # 剔除週末
 
-# 🌟 解決未來變數悖論：將最後一天的真實籌碼與 NLP 情緒「平移」到未來，假設慣性延續
+# 🌟 將最後一天的真實籌碼與 NLP 情緒「平移」到未來
 last_net_buy = df_prophet['Net_Buy_K'].iloc[-1]
 last_sentiment = df_prophet['Sentiment'].iloc[-1]
 
@@ -164,7 +161,7 @@ forecast = model.predict(future)
 # 區塊 A：繪製趨勢主圖表
 # =========================================================
 print("\n" + "="*60)
-print(f"📊 【{display_name}】NLP 多因子 AI 預測圖表生成中...")
+print("📊 NLP 多因子 AI 預測圖表生成中...")
 print("="*60)
 
 fig1 = model.plot(forecast, figsize=(12, 6))
@@ -196,12 +193,12 @@ history_last_date = df_prophet['ds'].max()
 future_predictions = forecast[forecast['ds'] > history_last_date].copy()
 
 print("\n" + "★"*70)
-print(f"📄 【{display_name}】決策指揮中心 (分析基準: {history_last_date.strftime('%Y-%m-%d')})")
+print(f"📄 決策指揮中心 (分析基準: {history_last_date.strftime('%Y-%m-%d')})")
 print("★"*70)
 
-# ⚠️ 此處已修復 f-string 截斷問題
 print("\n🧠 【NLP 自然語言情緒解析 (SnowNLP)】")
-print(f"   🚩 綜合市場情緒分數：{recent_news_sentiment:.2f} (0=極度恐慌, 1=極度貪婪)")
+# ⚠️ 此處已替換為 .format() 寫法，徹底避開 f-string 錯誤
+print("   🚩 綜合市場情緒分數：{:.2f} (0=極度恐慌, 1=極度貪婪)".format(recent_news_sentiment))
 for text in news_display_text:
     print(text)
 
@@ -225,27 +222,28 @@ if not future_predictions.empty:
         weekday_str = day_mapping[weekday]
         
         if current_date in tw_holidays:
-            print(f"📅 {date_str} ({weekday_str}) | 🛑 今日休市 ({tw_holidays.get(current_date)})")
+            print(f"📅 {date_str} ({weekday_str}) | 🛑 今日休市")
             continue
             
         if first_price is None:
             first_price = row['yhat']
         last_price = row['yhat']
         
-        print(f"📅 {date_str} ({weekday_str}) | 期望價: ${row['yhat']:.2f} | 區間: ${row['yhat_lower']:.2f} ~ ${row['yhat_upper']:.2f}")
+        # 這裡也改用簡單的字串格式化，避免任何潛在的換行解析錯誤
+        print("📅 {} ({}) | 期望價: ${:.2f} | 區間: ${:.2f} ~ ${:.2f}".format(date_str, weekday_str, row['yhat'], row['yhat_lower'], row['yhat_upper']))
         valid_days_count += 1
 
 print("\n" + "="*70)
-print(f"💡 【多因子綜合行動建議】：")
+print("💡 【多因子綜合行動建議】：")
 
 is_sentiment_good = recent_news_sentiment > 0.55
 is_trend_up = last_price > first_price if (last_price and first_price) else False 
 is_chip_good = last_net_buy > 0 
 
-print(f"📌 當前模型參數狀態：")
-print(f"   1. NLP 新聞情緒：{'樂觀 🟢' if is_sentiment_good else '悲觀 / 觀望 🔴'}")
-print(f"   2. 法人籌碼動向：{'買超 🟢' if is_chip_good else '賣超 🔴'}")
-print(f"   3. AI 短期預測：{'趨勢向上 🟢' if is_trend_up else '趨勢向下 🔴'}")
+print("📌 當前模型參數狀態：")
+print("   1. NLP 新聞情緒：{}".format('樂觀 🟢' if is_sentiment_good else '悲觀 / 觀望 🔴'))
+print("   2. 法人籌碼動向：{}".format('買超 🟢' if is_chip_good else '賣超 🔴'))
+print("   3. AI 短期預測：{}".format('趨勢向上 🟢' if is_trend_up else '趨勢向下 🔴'))
 
 print("\n🎯 最終建議：")
 if is_sentiment_good and is_trend_up and is_chip_good:
