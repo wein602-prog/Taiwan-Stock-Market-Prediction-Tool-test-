@@ -73,11 +73,15 @@ if run_button:
         ticker = yf.Ticker(ticker_symbol, session=yf_session)
         stock_data = ticker.history(period="2y").reset_index()
         
+        # 🌟 修正重點：強制移除「收盤價」為空值 (NaN) 的列，避免抓到無效的盤中半成品資料
+        stock_data = stock_data.dropna(subset=['Close'])
+        
         if stock_data.empty:
             st.error("❌ 找不到 {} 的歷史股價資料，請確認股票代號是否輸入正確。".format(ticker_symbol))
             st.stop()
 
         stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
+        # 確保資料乾淨後，再抓取最後一筆作為最新收盤價
         current_price = stock_data['Close'].iloc[-1] 
 
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
@@ -201,7 +205,6 @@ if run_button:
     st.markdown("---")
     st.subheader("📄 決策指揮中心 (分析基準: {})".format(history_last_date.strftime('%Y-%m-%d')))
 
-    # 🌟 徹底修正版：完全捨棄 yfinance，改用 FinMind 官方真實財報數據
     st.markdown("#### 💰 基本面評估 (資料來源：台灣證交所/櫃買中心)")
     
     pe_ratio_str = "N/A"
@@ -212,16 +215,14 @@ if run_button:
         # 往前推 10 天，確保能抓到最新一個交易日的官方結算數據
         fm_start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
         
-        # ⚠️ 修正重點 1：正確的 dataset 名稱為 TaiwanStockPER
         fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={}&start_date={}".format(stock_id, fm_start_date)
         fm_res = requests.get(fm_url, timeout=5)
         fm_data = fm_res.json()
         
         if fm_data.get('msg') == 'success' and len(fm_data.get('data', [])) > 0:
-            latest_fun = fm_data['data'][-1] # 取陣列最後一筆 (最新)
+            latest_fun = fm_data['data'][-1] 
             per = latest_fun.get('PER')
             pbr = latest_fun.get('PBR')
-            # ⚠️ 修正重點 2：正確的 JSON 鍵值為 dividend_yield
             dy = latest_fun.get('dividend_yield') 
             
             pe_ratio_str = "{:.2f} 倍".format(per) if per else "N/A"
