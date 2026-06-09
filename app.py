@@ -1,6 +1,4 @@
-# =========================================================
-# 1. 載入所需套件 (🌟 新增 snownlp 用於中文 NLP 情緒分析)
-# =========================================================
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -15,162 +13,148 @@ from snownlp import SnowNLP
 import requests
 import holidays
 import warnings
-warnings.filterwarnings('ignore') # 忽略 Prophet 的警告訊息
-
-# ---------------------------------------------------------
-# 🛠️ 解決 Matplotlib 中文顯示問題 (使用 Google 思源黑體)
-# ---------------------------------------------------------
-import matplotlib.font_manager as fm
-import os
-
-font_url = 'https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf'
-font_path = 'NotoSansCJKtc-Regular.otf'
-
-if not os.path.exists(font_path):
-    print("📥 正在下載繁體中文字型 (思源黑體)...")
-    response = requests.get(font_url)
-    with open(font_path, 'wb') as f:
-        f.write(response.content)
-
-fm.fontManager.addfont(font_path)
-custom_font = fm.FontProperties(fname=font_path)
-plt.rcParams['font.sans-serif'] = custom_font.get_name() 
-plt.rcParams['axes.unicode_minus'] = False 
+warnings.filterwarnings('ignore')
 
 # =========================================================
-# 2. 標的設定與基本面資料抓取 (🌟 新增 Session 偽裝防阻擋)
+# 0. Streamlit 網頁基本設定
+# =========================================================
+st.set_page_config(page_title="台股 NLP 多因子預測系統", page_icon="📈", layout="wide")
+st.title("📈 台股 NLP 多因子 AI 預測系統")
+st.markdown("---")
+
+# ---------------------------------------------------------
+# 🛠️ 解決 Matplotlib 中文顯示問題 (使用 st.cache_resource 避免重複下載)
+# ---------------------------------------------------------
+@st.cache_resource
+def setup_font():
+    import matplotlib.font_manager as fm
+    import os
+    font_url = 'https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf'
+    font_path = 'NotoSansCJKtc-Regular.otf'
+
+    if not os.path.exists(font_path):
+        response = requests.get(font_url)
+        with open(font_path, 'wb') as f:
+            f.write(response.content)
+
+    fm.fontManager.addfont(font_path)
+    custom_font = fm.FontProperties(fname=font_path)
+    plt.rcParams['font.sans-serif'] = custom_font.get_name() 
+    plt.rcParams['axes.unicode_minus'] = False 
+
+setup_font()
+
+# =========================================================
+# 核心運算區塊 (加入 st.spinner 顯示載入中動畫)
 # =========================================================
 ticker_symbol = "2887.TW"  
-print("🔄 正在啟動 NLP 多因子量化引擎，下載 {} 兩年期大數據...".format(ticker_symbol))
 
-# 🌟 建立自訂 Session，偽裝成真實的 Chrome 瀏覽器，避免 Yahoo Finance 擋 IP
-yf_session = requests.Session()
-yf_session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-})
-
-# 將 session 傳入 Ticker
-ticker = yf.Ticker(ticker_symbol, session=yf_session)
-stock_data = ticker.history(period="2y").reset_index()
-stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
-
-stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
-try:
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    res = requests.get("https://tw.stock.yahoo.com/quote/{}".format(stock_id), headers=headers, timeout=5)
-    title_text = res.text[res.text.find('<title>') + 7 : res.text.find('</title>')]
-    chinese_name = title_text.split('(')[0].strip()
-    display_name = "{} {}".format(ticker_symbol, chinese_name) if "Yahoo" not in chinese_name else ticker_symbol
-except:
-    display_name = ticker_symbol
-
-# =========================================================
-# 3. 特徵工程 A：獲取 2 年期歷史法人籌碼 (FinMind)
-# =========================================================
-print("📊 正在融合三大法人歷史籌碼數據...")
-start_date_chip = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={}&start_date={}".format(stock_id, start_date_chip)
-try:
-    r = requests.get(url, timeout=10)
-    chip_data = r.json()
-    if chip_data.get('msg') == 'success' and len(chip_data.get('data', [])) > 0:
-        df_chips = pd.DataFrame(chip_data['data'])
-        df_chips['net_buy'] = (df_chips['buy'] - df_chips['sell']) / 1000 # 轉換為「千張」
-        df_chips['date'] = pd.to_datetime(df_chips['date'])
-        # 將外資、投信、自營商合併為每日總買賣超
-        daily_chips = df_chips.groupby('date')['net_buy'].sum().reset_index()
-        daily_chips.rename(columns={'date': 'Date', 'net_buy': 'Net_Buy_K'}, inplace=True)
-    else:
-        daily_chips = pd.DataFrame(columns=['Date', 'Net_Buy_K'])
-except:
-    daily_chips = pd.DataFrame(columns=['Date', 'Net_Buy_K'])
-
-# 合併股價與籌碼
-df_merged = pd.merge(stock_data, daily_chips, on='Date', how='left')
-df_merged['Net_Buy_K'] = df_merged['Net_Buy_K'].fillna(0) # 假日或無資料補 0
-
-# =========================================================
-# 4. 特徵工程 B：NLP 新聞情緒分析 (SnowNLP)
-# =========================================================
-print("📰 正在執行 NLP 模組：分析近期新聞情緒分數...")
-recent_news_sentiment = 0.5 # 預設中性 (0~1)
-news_display_text = []
-
-try:
-    google_news = GNews(language='zh-Hant', country='TW', max_results=5)
-    search_keyword = "{} 股票".format(chinese_name if 'chinese_name' in locals() else stock_id)
-    news_items = google_news.get_news(search_keyword)
+with st.spinner(f'🔄 正在啟動 NLP 多因子量化引擎，下載 {ticker_symbol} 兩年期大數據與訓練模型中，請稍候...'):
     
-    if news_items:
-        sentiment_scores = []
-        for i, news in enumerate(news_items, 1):
-            title = news.get('title', '')
-            publisher = news.get('publisher', {}).get('title', '未知')
-            
-            # 使用 SnowNLP 進行自然語言情緒評估
-            s = SnowNLP(title)
-            score = s.sentiments # 回傳 0(極度負面) 到 1(極度正面)
-            sentiment_scores.append(score)
-            
-            # 轉換為視覺化標籤
-            if score > 0.65: emotion = "🟢 利多"
-            elif score < 0.35: emotion = "🔴 利空"
-            else: emotion = "⚖️ 中性"
-            
-            # ⚠️ 使用 .format() 避免 f-string 換行解析錯誤
-            news_display_text.append("   {}. [{}] {} \n      ➥ NLP 判定: {} (分數: {:.2f})".format(i, publisher, title, emotion, score))
+    # 1. 標的設定與基本面資料抓取
+    yf_session = requests.Session()
+    yf_session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    })
+
+    ticker = yf.Ticker(ticker_symbol, session=yf_session)
+    stock_data = ticker.history(period="2y").reset_index()
+    stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
+
+    stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get("https://tw.stock.yahoo.com/quote/{}".format(stock_id), headers=headers, timeout=5)
+        title_text = res.text[res.text.find('<title>') + 7 : res.text.find('</title>')]
+        chinese_name = title_text.split('(')[0].strip()
+        display_name = "{} {}".format(ticker_symbol, chinese_name) if "Yahoo" not in chinese_name else ticker_symbol
+    except:
+        display_name = ticker_symbol
+
+    # 2. 獲取法人籌碼
+    start_date_chip = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={}&start_date={}".format(stock_id, start_date_chip)
+    try:
+        r = requests.get(url, timeout=10)
+        chip_data = r.json()
+        if chip_data.get('msg') == 'success' and len(chip_data.get('data', [])) > 0:
+            df_chips = pd.DataFrame(chip_data['data'])
+            df_chips['net_buy'] = (df_chips['buy'] - df_chips['sell']) / 1000 
+            df_chips['date'] = pd.to_datetime(df_chips['date'])
+            daily_chips = df_chips.groupby('date')['net_buy'].sum().reset_index()
+            daily_chips.rename(columns={'date': 'Date', 'net_buy': 'Net_Buy_K'}, inplace=True)
+        else:
+            daily_chips = pd.DataFrame(columns=['Date', 'Net_Buy_K'])
+    except:
+        daily_chips = pd.DataFrame(columns=['Date', 'Net_Buy_K'])
+
+    df_merged = pd.merge(stock_data, daily_chips, on='Date', how='left')
+    df_merged['Net_Buy_K'] = df_merged['Net_Buy_K'].fillna(0)
+
+    # 3. NLP 新聞情緒分析
+    recent_news_sentiment = 0.5 
+    news_display_text = []
+
+    try:
+        google_news = GNews(language='zh-Hant', country='TW', max_results=5)
+        search_keyword = "{} 股票".format(chinese_name if 'chinese_name' in locals() else stock_id)
+        news_items = google_news.get_news(search_keyword)
         
-        recent_news_sentiment = np.mean(sentiment_scores)
-    else:
-        news_display_text.append("   ⚠️ 目前找不到相關的最新中文新聞。")
-except Exception as e:
-    news_display_text.append("   ⚠️ NLP 新聞模組發生異常。")
+        if news_items:
+            sentiment_scores = []
+            for i, news in enumerate(news_items, 1):
+                title = news.get('title', '')
+                publisher = news.get('publisher', {}).get('title', '未知')
+                
+                s = SnowNLP(title)
+                score = s.sentiments 
+                sentiment_scores.append(score)
+                
+                if score > 0.65: emotion = "🟢 利多"
+                elif score < 0.35: emotion = "🔴 利空"
+                else: emotion = "⚖️ 中性"
+                
+                news_display_text.append("{}. [{}] {} \n ➥ NLP 判定: {} (分數: {:.2f})".format(i, publisher, title, emotion, score))
+            
+            recent_news_sentiment = np.mean(sentiment_scores)
+        else:
+            news_display_text.append("⚠️ 目前找不到相關的最新中文新聞。")
+    except Exception as e:
+        news_display_text.append("⚠️ NLP 新聞模組發生異常。")
 
-# 建立歷史情緒模擬
-df_merged['Sentiment'] = 0.5 + (df_merged['Close'].pct_change().fillna(0) * 2) + (df_merged['Net_Buy_K'] / 10000)
-df_merged['Sentiment'] = df_merged['Sentiment'].clip(0, 1) # 限制在 0~1 之間
-df_merged.iloc[-1, df_merged.columns.get_loc('Sentiment')] = recent_news_sentiment # 最新一天帶入真實 NLP 分數
+    df_merged['Sentiment'] = 0.5 + (df_merged['Close'].pct_change().fillna(0) * 2) + (df_merged['Net_Buy_K'] / 10000)
+    df_merged['Sentiment'] = df_merged['Sentiment'].clip(0, 1) 
+    df_merged.iloc[-1, df_merged.columns.get_loc('Sentiment')] = recent_news_sentiment 
+
+    # 4. Prophet 模型訓練
+    df_prophet = df_merged[['Date', 'Close', 'Net_Buy_K', 'Sentiment']].rename(columns={'Date': 'ds', 'Close': 'y'})
+
+    model = Prophet(daily_seasonality=False, weekly_seasonality=False, yearly_seasonality=False, changepoint_prior_scale=0.15, changepoint_range=0.98)
+    model.add_regressor('Net_Buy_K')
+    model.add_regressor('Sentiment')
+    model.fit(df_prophet)
+
+    future = model.make_future_dataframe(periods=30)
+    future = future[future['ds'].dt.weekday < 5] 
+
+    last_net_buy = df_prophet['Net_Buy_K'].iloc[-1]
+    last_sentiment = df_prophet['Sentiment'].iloc[-1]
+
+    future = pd.merge(future, df_prophet[['ds', 'Net_Buy_K', 'Sentiment']], on='ds', how='left')
+    future['Net_Buy_K'] = future['Net_Buy_K'].fillna(last_net_buy)
+    future['Sentiment'] = future['Sentiment'].fillna(last_sentiment)
+
+    forecast = model.predict(future)
+
+# 顯示成功訊息
+st.success("✅ 資料載入與模型訓練完成！")
 
 # =========================================================
-# 5. Prophet 多因子模型訓練 (加入 External Regressors)
+# 網頁視覺化輸出區塊 (取代原本的 print 與 plt.show)
 # =========================================================
-df_prophet = df_merged[['Date', 'Close', 'Net_Buy_K', 'Sentiment']].rename(columns={'Date': 'ds', 'Close': 'y'})
 
-model = Prophet(
-    daily_seasonality=False, 
-    weekly_seasonality=False,
-    yearly_seasonality=False,
-    changepoint_prior_scale=0.15, 
-    changepoint_range=0.98        
-)
-
-# 🌟 核心升級：將籌碼與情緒加入模型
-model.add_regressor('Net_Buy_K')
-model.add_regressor('Sentiment')
-model.fit(df_prophet)
-
-# 準備未來 30 天的預測框架
-future = model.make_future_dataframe(periods=30)
-future = future[future['ds'].dt.weekday < 5] # 剔除週末
-
-# 🌟 將最後一天的真實籌碼與 NLP 情緒「平移」到未來
-last_net_buy = df_prophet['Net_Buy_K'].iloc[-1]
-last_sentiment = df_prophet['Sentiment'].iloc[-1]
-
-# 將歷史外部變數與未來外部變數合併
-future = pd.merge(future, df_prophet[['ds', 'Net_Buy_K', 'Sentiment']], on='ds', how='left')
-future['Net_Buy_K'] = future['Net_Buy_K'].fillna(last_net_buy)
-future['Sentiment'] = future['Sentiment'].fillna(last_sentiment)
-
-# 進行多因子預測
-forecast = model.predict(future)
-
-# =========================================================
-# 區塊 A：繪製趨勢主圖表
-# =========================================================
-print("\n" + "="*60)
-print("📊 NLP 多因子 AI 預測圖表生成中...")
-print("="*60)
+# --- 區塊 A：繪製趨勢主圖表 ---
+st.subheader("📊 NLP 多因子 AI 預測圖表")
 
 fig1 = model.plot(forecast, figsize=(12, 6))
 ax = fig1.gca()
@@ -190,78 +174,78 @@ plt.xlabel('日期', fontsize=12)
 plt.ylabel('股價', fontsize=12)
 ax.grid(which='major', color='gray', linestyle='-', alpha=0.4)
 ax.grid(which='minor', color='gray', linestyle=':', alpha=0.15)
-
 plt.tight_layout()
-plt.show()
 
-# =========================================================
-# 區塊 B：文字報告整合
-# =========================================================
+# 🌟 關鍵：使用 st.pyplot() 將圖表送到網頁上
+st.pyplot(fig1)
+
+# --- 區塊 B：文字報告整合 ---
 history_last_date = df_prophet['ds'].max()
 future_predictions = forecast[forecast['ds'] > history_last_date].copy()
 
-print("\n" + "★"*70)
-print("📄 決策指揮中心 (分析基準: {})".format(history_last_date.strftime('%Y-%m-%d')))
-print("★"*70)
+st.markdown("---")
+st.subheader("📄 決策指揮中心 (分析基準: {})".format(history_last_date.strftime('%Y-%m-%d')))
 
-print("\n🧠 【NLP 自然語言情緒解析 (SnowNLP)】")
-# ⚠️ 此處已替換為 .format() 寫法，徹底避開 f-string 錯誤
-print("   🚩 綜合市場情緒分數：{:.2f} (0=極度恐慌, 1=極度貪婪)".format(recent_news_sentiment))
-for text in news_display_text:
-    print(text)
+col1, col2 = st.columns(2)
 
-print("\n📈 【NLP 籌碼多因子未來推演 (已剔除假日)】")
-day_mapping = {0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五'}
-current_year = datetime.now().year
-tw_holidays = holidays.TW(years=[current_year, current_year + 1]) 
+with col1:
+    st.markdown("#### 🧠 NLP 自然語言情緒解析")
+    st.info("🚩 **綜合市場情緒分數：{:.2f}** (0=極度恐慌, 1=極度貪婪)".format(recent_news_sentiment))
+    for text in news_display_text:
+        st.caption(text)
 
-valid_days_count = 0
-first_price = None
-last_price = None
+with col2:
+    st.markdown("#### 📈 NLP 籌碼多因子未來推演")
+    day_mapping = {0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五'}
+    current_year = datetime.now().year
+    tw_holidays = holidays.TW(years=[current_year, current_year + 1]) 
 
-if not future_predictions.empty:
-    for idx, row in future_predictions.iterrows():
-        if valid_days_count >= 5: 
-            break
+    valid_days_count = 0
+    first_price = None
+    last_price = None
+
+    if not future_predictions.empty:
+        for idx, row in future_predictions.iterrows():
+            if valid_days_count >= 5: 
+                break
+                
+            current_date = row['ds']
+            date_str = current_date.strftime('%Y-%m-%d')
+            weekday = current_date.weekday()
+            weekday_str = day_mapping[weekday]
             
-        current_date = row['ds']
-        date_str = current_date.strftime('%Y-%m-%d')
-        weekday = current_date.weekday()
-        weekday_str = day_mapping[weekday]
-        
-        if current_date in tw_holidays:
-            print("📅 {} ({}) | 🛑 今日休市".format(date_str, weekday_str))
-            continue
+            if current_date in tw_holidays:
+                st.write("📅 {} ({}) | 🛑 **今日休市**".format(date_str, weekday_str))
+                continue
+                
+            if first_price is None:
+                first_price = row['yhat']
+            last_price = row['yhat']
             
-        if first_price is None:
-            first_price = row['yhat']
-        last_price = row['yhat']
-        
-        # 這裡也改用簡單的字串格式化
-        print("📅 {} ({}) | 期望價: ${:.2f} | 區間: ${:.2f} ~ ${:.2f}".format(date_str, weekday_str, row['yhat'], row['yhat_lower'], row['yhat_upper']))
-        valid_days_count += 1
+            st.write("📅 **{}** ({}) | 期望價: **${:.2f}** | 區間: ${:.2f} ~ ${:.2f}".format(
+                date_str, weekday_str, row['yhat'], row['yhat_lower'], row['yhat_upper']))
+            valid_days_count += 1
 
-print("\n" + "="*70)
-print("💡 【多因子綜合行動建議】：")
+st.markdown("---")
+st.subheader("💡 多因子綜合行動建議")
 
 is_sentiment_good = recent_news_sentiment > 0.55
 is_trend_up = last_price > first_price if (last_price and first_price) else False 
 is_chip_good = last_net_buy > 0 
 
-print("📌 當前模型參數狀態：")
-print("   1. NLP 新聞情緒：{}".format('樂觀 🟢' if is_sentiment_good else '悲觀 / 觀望 🔴'))
-print("   2. 法人籌碼動向：{}".format('買超 🟢' if is_chip_good else '賣超 🔴'))
-print("   3. AI 短期預測：{}".format('趨勢向上 🟢' if is_trend_up else '趨勢向下 🔴'))
+st.write("📌 **當前模型參數狀態：**")
+st.write("1. NLP 新聞情緒：{}".format('**樂觀** 🟢' if is_sentiment_good else '**悲觀 / 觀望** 🔴'))
+st.write("2. 法人籌碼動向：{}".format('**買超** 🟢' if is_chip_good else '**賣超** 🔴'))
+st.write("3. AI 短期預測：{}".format('**趨勢向上** 🟢' if is_trend_up else '**趨勢向下** 🔴'))
 
-print("\n🎯 最終建議：")
+st.markdown("#### 🎯 最終建議：")
 if is_sentiment_good and is_trend_up and is_chip_good:
-    print(" 【利多共振 - 積極做多】🔥\n 情緒、籌碼與時間序列皆偏多，資金處於順風期。")
+    st.success("🔥 **【利多共振 - 積極做多】**\n\n情緒、籌碼與時間序列皆偏多，資金處於順風期。")
 elif not is_sentiment_good and is_trend_up and is_chip_good:
-    print(" 【籌碼硬扛 - 短線偏多】⚡\n 雖然新聞面有雜音，但法人持續買進，模型判定技術面足以支撐上漲。")
+    st.warning("⚡ **【籌碼硬扛 - 短線偏多】**\n\n雖然新聞面有雜音，但法人持續買進，模型判定技術面足以支撐上漲。")
 elif is_sentiment_good and not is_trend_up and not is_chip_good:
-    print(" 【利多出盡 - 觀望回檔】⚠️\n 新聞雖好，但法人正在倒貨（拉高出貨），AI 預測即將下彎，請勿追高。")
+    st.error("⚠️ **【利多出盡 - 觀望回檔】**\n\n新聞雖好，但法人正在倒貨（拉高出貨），AI 預測即將下彎，請勿追高。")
 elif not is_sentiment_good and not is_trend_up and not is_chip_good:
-    print(" 【弱勢空頭格局 - 嚴控風險】❄️\n 情緒低落且籌碼渙散，建議保持空手。")
+    st.error("❄️ **【弱勢空頭格局 - 嚴控風險】**\n\n情緒低落且籌碼渙散，建議保持空手。")
 else:
-    print(" 【多空分歧 - 區間震盪】⚖️\n 指標發生衝突，目前缺乏明確方向，建議縮小部位或回歸基本面存股。")
-print("="*70)
+    st.info("⚖️ **【多空分歧 - 區間震盪】**\n\n指標發生衝突，目前缺乏明確方向，建議縮小部位或回歸基本面存股。")
