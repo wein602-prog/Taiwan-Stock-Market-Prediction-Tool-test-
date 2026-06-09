@@ -73,7 +73,7 @@ if run_button:
         ticker = yf.Ticker(ticker_symbol, session=yf_session)
         stock_data = ticker.history(period="2y").reset_index()
         
-        # 過濾空值，避免抓到 NaN 的半成品資料
+        # 過濾空值
         stock_data = stock_data.dropna(subset=['Close'])
         
         if stock_data.empty:
@@ -82,8 +82,30 @@ if run_button:
 
         stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
         
-        # 🌟 恢復最初的寫法：從歷史表抓取最後一筆準確收盤價
-        current_price = stock_data['Close'].iloc[-1]
+        # 🌟 終極收盤價抓取邏輯 (解決 yfinance 台股延遲與假資料問題)
+        current_price = None
+        
+        # 方法 A: 強制抓取即時報價字典 (不受歷史線圖延遲影響)
+        try:
+            info = ticker.info
+            current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+        except:
+            pass
+            
+        # 方法 B: 嘗試 fast_info 即時快照
+        if not current_price or pd.isna(current_price):
+            try:
+                current_price = ticker.fast_info.last_price
+            except:
+                pass
+                
+        # 方法 C: 退回使用歷史線圖最後一筆
+        if not current_price or pd.isna(current_price):
+            current_price = stock_data['Close'].iloc[-1]
+
+        # 🔧 關鍵修正：將抓到的「真實即時市價」強制覆蓋到歷史資料表的最後一筆
+        # 這樣不僅網頁顯示正確，連 AI 模型 (Prophet) 預測的基準點也會被校正！
+        stock_data.iloc[-1, stock_data.columns.get_loc('Close')] = current_price
 
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
         try:
@@ -218,7 +240,6 @@ if run_button:
         fm_res = requests.get(fm_url, timeout=5)
         fm_data = fm_res.json()
         
-        # 🌟 確保這行程式碼完整！避免發生 SyntaxError
         if fm_data.get('msg') == 'success' and len(fm_data.get('data', [])) > 0:
             latest_fun = fm_data['data'][-1] 
             per = latest_fun.get('PER')
