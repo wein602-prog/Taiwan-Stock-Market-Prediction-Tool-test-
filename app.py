@@ -45,13 +45,12 @@ def setup_font():
 setup_font()
 
 # =========================================================
-# 🌟 新增：左側邊欄 (輸入設定區)
+# 左側邊欄 (輸入設定區)
 # =========================================================
 st.sidebar.header("⚙️ 參數設定")
 st.sidebar.markdown("請輸入台灣股票代號。上市股票請加 `.TW`，上櫃股票請加 `.TWO`。")
 
-# 輸入框與按鈕
-ticker_symbol = st.sidebar.text_input("股票代號 (例如: 2330.TW, 2887.TW)", value="2887.TW")
+ticker_symbol = st.sidebar.text_input("股票代號 (例如: 2330.TW, 3711.TW)", value="3711.TW")
 run_button = st.sidebar.button("🚀 開始分析", use_container_width=True)
 
 st.sidebar.markdown("---")
@@ -61,12 +60,11 @@ st.sidebar.info("💡 **操作提示**\n\n輸入代號後，點擊上方「開�
 # 核心運算區塊 (按下按鈕後才會執行)
 # =========================================================
 if run_button:
-    # 把代號轉成大寫並去除空白，避免輸入錯誤
     ticker_symbol = ticker_symbol.strip().upper()
 
     with st.spinner('🔄 正在啟動 NLP 多因子量化引擎，下載 {} 兩年期大數據與訓練模型中，請稍候...'.format(ticker_symbol)):
         
-        # 1. 標的設定與基本面資料抓取
+        # 1. 標的設定與基本面資料抓取 (加入防擋 IP 偽裝)
         yf_session = requests.Session()
         yf_session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -75,12 +73,12 @@ if run_button:
         ticker = yf.Ticker(ticker_symbol, session=yf_session)
         stock_data = ticker.history(period="2y").reset_index()
         
-        # 檢查是否真的有抓到資料 (防止輸入錯誤的代號)
         if stock_data.empty:
-            st.error("❌ 找不到 {} 的歷史股價資料，請確認股票代號是否輸入正確 (需加上 .TW 或 .TWO)。".format(ticker_symbol))
-            st.stop() # 停止執行後續程式碼
+            st.error("❌ 找不到 {} 的歷史股價資料，請確認股票代號是否輸入正確。".format(ticker_symbol))
+            st.stop()
 
         stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
+        current_price = stock_data['Close'].iloc[-1] # 取得最新收盤價
 
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
         try:
@@ -92,7 +90,7 @@ if run_button:
         except:
             display_name = ticker_symbol
 
-        # 2. 獲取法人籌碼
+        # 2. 獲取法人籌碼 (FinMind API)
         start_date_chip = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
         url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={}&start_date={}".format(stock_id, start_date_chip)
         try:
@@ -112,7 +110,7 @@ if run_button:
         df_merged = pd.merge(stock_data, daily_chips, on='Date', how='left')
         df_merged['Net_Buy_K'] = df_merged['Net_Buy_K'].fillna(0)
 
-        # 3. NLP 新聞情緒分析
+        # 3. NLP 新聞情緒分析 (SnowNLP)
         recent_news_sentiment = 0.5 
         news_display_text = []
 
@@ -167,7 +165,6 @@ if run_button:
 
         forecast = model.predict(future)
 
-    # 顯示成功訊息
     st.success("✅ {} 資料載入與模型訓練完成！".format(display_name))
 
     # =========================================================
@@ -204,6 +201,34 @@ if run_button:
     st.markdown("---")
     st.subheader("📄 決策指揮中心 (分析基準: {})".format(history_last_date.strftime('%Y-%m-%d')))
 
+    # 🌟 修正版：基本面評估 (手動精算避免 API 錯誤)
+    st.markdown("#### 💰 基本面評估")
+    info = ticker.info
+    eps = info.get('trailingEPS', 0)
+    pe_ratio = (current_price / eps) if (eps and eps > 0) else info.get('trailingPE', 0)
+    book_value = info.get('bookValue', 0)
+    pb_ratio = (current_price / book_value) if (book_value and book_value > 0) else info.get('priceToBook', 0)
+
+    try:
+        divs = ticker.dividends
+        if not divs.empty:
+            divs.index = divs.index.tz_localize(None)
+            recent_divs = divs[divs.index > (datetime.now() - timedelta(days=365))]
+            total_dividend = recent_divs.sum()
+            div_yield = (total_dividend / current_price) * 100
+        else:
+            raw_yield = info.get('dividendYield')
+            div_yield = (raw_yield * 100) if raw_yield else 0.0
+    except:
+        div_yield = 0.0
+
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("最新收盤價", "{:.2f} 元".format(current_price))
+    col_b.metric("本益比 (PE)", "{:.2f} 倍".format(pe_ratio) if pe_ratio else "N/A")
+    col_c.metric("淨值比 (PB)", "{:.2f} 倍".format(pb_ratio) if pb_ratio else "N/A")
+    col_d.metric("預估殖利率", "{:.2f} %".format(div_yield) if div_yield else "N/A")
+
+    st.markdown("---")
     col1, col2 = st.columns(2)
 
     with col1:
@@ -269,5 +294,4 @@ if run_button:
         st.info("⚖️ **【多空分歧 - 區間震盪】**\n\n指標發生衝突，目前缺乏明確方向，建議縮小部位或回歸基本面存股。")
 
 else:
-    # 這是剛進入網頁，還沒按鈕時顯示的歡迎畫面
     st.info("👈 請在左側輸入欲查詢的股票代號（例如：2330.TW），並點擊「開始分析」！")
