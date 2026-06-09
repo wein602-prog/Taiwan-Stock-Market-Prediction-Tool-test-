@@ -1,9 +1,9 @@
-streamlit
 yfinance
+prophet
+gnews
+holidays
+snownlp
+requests
 pandas
 numpy
 matplotlib
-prophet
-gnews
-requests
-holidays
