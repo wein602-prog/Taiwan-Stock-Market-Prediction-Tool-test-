@@ -73,7 +73,7 @@ if run_button:
         ticker = yf.Ticker(ticker_symbol, session=yf_session)
         stock_data = ticker.history(period="2y").reset_index()
         
-        # 🌟 修正重點：強制移除「收盤價」為空值 (NaN) 的列，避免抓到無效的盤中半成品資料
+        # 清理空值
         stock_data = stock_data.dropna(subset=['Close'])
         
         if stock_data.empty:
@@ -81,8 +81,15 @@ if run_button:
             st.stop()
 
         stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
-        # 確保資料乾淨後，再抓取最後一筆作為最新收盤價
-        current_price = stock_data['Close'].iloc[-1] 
+        
+        # 🌟 核心修正：捨棄容易出錯的 history() 尾盤，改用 fast_info 抓取真正即時/未經調整的實際市價
+        try:
+            current_price = ticker.fast_info.last_price
+            # 防呆機制：如果連 fast_info 都回傳空值，才退回去拿歷史表最後一筆
+            if pd.isna(current_price):
+                current_price = stock_data['Close'].iloc[-1]
+        except:
+            current_price = stock_data['Close'].iloc[-1]
 
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
         try:
@@ -212,95 +219,9 @@ if run_button:
     div_yield_str = "N/A"
     
     try:
-        # 往前推 10 天，確保能抓到最新一個交易日的官方結算數據
         fm_start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
-        
         fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={}&start_date={}".format(stock_id, fm_start_date)
         fm_res = requests.get(fm_url, timeout=5)
         fm_data = fm_res.json()
         
-        if fm_data.get('msg') == 'success' and len(fm_data.get('data', [])) > 0:
-            latest_fun = fm_data['data'][-1] 
-            per = latest_fun.get('PER')
-            pbr = latest_fun.get('PBR')
-            dy = latest_fun.get('dividend_yield') 
-            
-            pe_ratio_str = "{:.2f} 倍".format(per) if per else "N/A"
-            pb_ratio_str = "{:.2f} 倍".format(pbr) if pbr else "N/A"
-            div_yield_str = "{:.2f} %".format(dy) if dy else "N/A"
-    except Exception as e:
-        pass
-
-    col_a, col_b, col_c, col_d = st.columns(4)
-    col_a.metric("最新收盤價", "{:.2f} 元".format(current_price))
-    col_b.metric("本益比 (PE)", pe_ratio_str)
-    col_c.metric("淨值比 (PB)", pb_ratio_str)
-    col_d.metric("官方殖利率", div_yield_str)
-
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### 🧠 NLP 自然語言情緒解析")
-        st.info("🚩 **綜合市場情緒分數：{:.2f}** (0=極度恐慌, 1=極度貪婪)".format(recent_news_sentiment))
-        for text in news_display_text:
-            st.caption(text)
-
-    with col2:
-        st.markdown("#### 📈 NLP 籌碼多因子未來推演")
-        day_mapping = {0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五'}
-        current_year = datetime.now().year
-        tw_holidays = holidays.TW(years=[current_year, current_year + 1]) 
-
-        valid_days_count = 0
-        first_price = None
-        last_price = None
-
-        if not future_predictions.empty:
-            for idx, row in future_predictions.iterrows():
-                if valid_days_count >= 5: 
-                    break
-                    
-                current_date = row['ds']
-                date_str = current_date.strftime('%Y-%m-%d')
-                weekday = current_date.weekday()
-                weekday_str = day_mapping[weekday]
-                
-                if current_date in tw_holidays:
-                    st.write("📅 {} ({}) | 🛑 **今日休市**".format(date_str, weekday_str))
-                    continue
-                    
-                if first_price is None:
-                    first_price = row['yhat']
-                last_price = row['yhat']
-                
-                st.write("📅 **{}** ({}) | 期望價: **${:.2f}** | 區間: ${:.2f} ~ ${:.2f}".format(
-                    date_str, weekday_str, row['yhat'], row['yhat_lower'], row['yhat_upper']))
-                valid_days_count += 1
-
-    st.markdown("---")
-    st.subheader("💡 多因子綜合行動建議")
-
-    is_sentiment_good = recent_news_sentiment > 0.55
-    is_trend_up = last_price > first_price if (last_price and first_price) else False 
-    is_chip_good = last_net_buy > 0 
-
-    st.write("📌 **當前模型參數狀態：**")
-    st.write("1. NLP 新聞情緒：{}".format('**樂觀** 🟢' if is_sentiment_good else '**悲觀 / 觀望** 🔴'))
-    st.write("2. 法人籌碼動向：{}".format('**買超** 🟢' if is_chip_good else '**賣超** 🔴'))
-    st.write("3. AI 短期預測：{}".format('**趨勢向上** 🟢' if is_trend_up else '**趨勢向下** 🔴'))
-
-    st.markdown("#### 🎯 最終建議：")
-    if is_sentiment_good and is_trend_up and is_chip_good:
-        st.success("🔥 **【利多共振 - 積極做多】**\n\n情緒、籌碼與時間序列皆偏多，資金處於順風期。")
-    elif not is_sentiment_good and is_trend_up and is_chip_good:
-        st.warning("⚡ **【籌碼硬扛 - 短線偏多】**\n\n雖然新聞面有雜音，但法人持續買進，模型判定技術面足以支撐上漲。")
-    elif is_sentiment_good and not is_trend_up and not is_chip_good:
-        st.error("⚠️ **【利多出盡 - 觀望回檔】**\n\n新聞雖好，但法人正在倒貨（拉高出貨），AI 預測即將下彎，請勿追高。")
-    elif not is_sentiment_good and not is_trend_up and not is_chip_good:
-        st.error("❄️ **【弱勢空頭格局 - 嚴控風險】**\n\n情緒低落且籌碼渙散，建議保持空手。")
-    else:
-        st.info("⚖️ **【多空分歧 - 區間震盪】**\n\n指標發生衝突，目前缺乏明確方向，建議縮小部位或回歸基本面存股。")
-
-else:
-    st.info("👈 請在左側輸入欲查詢的股票代號（例如：2330.TW），並點擊「開始分析」！")
+        if fm_data.get('msg') == 'success' and len
