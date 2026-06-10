@@ -15,11 +15,15 @@ import matplotlib.font_manager as fm
 import os
 import tempfile
 
-# --- 網頁設定 ---
+# ==========================================
+# 網頁基礎設定
+# ==========================================
 st.set_page_config(page_title="AI 股票決策指揮中心", page_icon="📈", layout="centered")
 st.title("📈 AI 股票預測與決策指揮中心")
 
-# --- 🛠️ 防呆優化 1：安全寫入字型 (避免雲端權限問題) ---
+# ==========================================
+# 🛠️ 核心優化：安全寫入中文字型 (避免雲端權限問題)
+# ==========================================
 @st.cache_resource
 def load_font():
     font_url = 'https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf'
@@ -43,18 +47,22 @@ def load_font():
 
 load_font()
 
-# --- 側邊欄：使用者輸入 ---
+# ==========================================
+# 側邊欄：使用者輸入區
+# ==========================================
 st.sidebar.header("設定區")
 ticker_symbol = st.sidebar.text_input("請輸入股票代號 (例如: 2887.TW)", value="2887.TW")
 analyze_button = st.sidebar.button("🚀 開始分析")
 
-# --- 主程式區塊 ---
+# ==========================================
+# 主程式運算區塊
+# ==========================================
 if analyze_button:
     with st.spinner(f"正在連線伺服器，全力運算 {ticker_symbol} 的數據中..."):
         
-        # ==========================================
-        # 1. 取得股價資料與中文名稱
-        # ==========================================
+        # ------------------------------------------
+        # 1. 取得歷史股價與中文名稱
+        # ------------------------------------------
         ticker = yf.Ticker(ticker_symbol)
         stock_data = ticker.history(period="2y")
         
@@ -64,7 +72,6 @@ if analyze_button:
             
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
         
-        # 🛠️ 防呆優化 2：增加爬蟲安全防護
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             url = f"https://tw.stock.yahoo.com/quote/{stock_id}"
@@ -84,9 +91,9 @@ if analyze_button:
 
         st.success(f"✅ 成功取得標的：【{display_name}】")
 
-        # ==========================================
-        # 2. 總體經濟環境
-        # ==========================================
+        # ------------------------------------------
+        # 2. 總體經濟與產業環境評估
+        # ------------------------------------------
         macro_tickers = {'^TWII': '台灣加權指數', '^SOX': '費城半導體指數', '^TNX': '美10年期公債殖利率'}
         macro_results, macro_score = {}, 0
         for sym, name in macro_tickers.items():
@@ -108,25 +115,28 @@ if analyze_button:
 
         env_status = "大環境順風 🌬️ (多頭動能強)" if macro_score >= 2 else "大環境逆風 🌪️ (系統性風險較高)" if macro_score <= -2 else "大環境中性 ⚖️ (震盪整理)"
 
-        # ==========================================
-        # 3. 基本面資料
-        # ==========================================
-        info = ticker.info
-        dividend_yield = info.get('dividendYield', 0)
-        trailing_yield = info.get('trailingAnnualDividendYield', 0)
-        final_yield = dividend_yield if dividend_yield else trailing_yield
-        yield_str = f"{final_yield:.2f}%" if final_yield > 1 else f"{final_yield * 100:.2f}%" if final_yield else "無資料"
+        # ------------------------------------------
+        # 3. 🛠️ 核心優化：基本面資料 (API 限流防護盾)
+        # ------------------------------------------
+        try:
+            info = ticker.info
+            dividend_yield = info.get('dividendYield', 0)
+            trailing_yield = info.get('trailingAnnualDividendYield', 0)
+            final_yield = dividend_yield if dividend_yield else trailing_yield
+            yield_str = f"{final_yield:.2f}%" if final_yield > 1 else f"{final_yield * 100:.2f}%" if final_yield else "無資料"
 
-        pe_ratio = info.get('trailingPE', None)
-        pe_str = f"{pe_ratio:.2f} 倍" if pe_ratio else "無資料"
-        eps = info.get('trailingEps', None)
-        eps_str = f"{eps:.2f} 元" if eps else "無資料"
-        pb_ratio = info.get('priceToBook', None)
-        pb_str = f"{pb_ratio:.2f} 倍" if pb_ratio else "無資料"
+            pe_ratio = info.get('trailingPE', None)
+            pe_str = f"{pe_ratio:.2f} 倍" if pe_ratio else "無資料"
+            eps = info.get('trailingEps', None)
+            eps_str = f"{eps:.2f} 元" if eps else "無資料"
+            pb_ratio = info.get('priceToBook', None)
+            pb_str = f"{pb_ratio:.2f} 倍" if pb_ratio else "無資料"
+        except Exception:
+            yield_str, pe_str, eps_str, pb_str = "⚠️ API限流", "⚠️ API限流", "⚠️ API限流", "⚠️ API限流"
 
-        # ==========================================
-        # 4. FinMind 三大法人與 OBV 籌碼
-        # ==========================================
+        # ------------------------------------------
+        # 4. 三大法人與 OBV 資金動能
+        # ------------------------------------------
         chip_text = ""
         try:
             start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
@@ -136,7 +146,6 @@ if analyze_button:
 
             if chip_data.get('msg') == 'success' and len(chip_data.get('data', [])) > 0:
                 df_chips = pd.DataFrame(chip_data['data'])
-                # 🛠️ 防呆優化 3：確保欄位存在
                 if 'buy' in df_chips.columns and 'sell' in df_chips.columns:
                     df_chips['net_buy'] = (df_chips['buy'] - df_chips['sell']) / 1000
                     recent_date = df_chips['date'].max()
@@ -154,7 +163,6 @@ if analyze_button:
         except:
             chip_text = "⚠️ 籌碼資料連線異常"
 
-        # 🛠️ 防呆優化 4：確保 OBV 計算長度安全
         obv = [0]
         if len(stock_data) > 1:
             for i in range(1, len(stock_data)):
@@ -171,9 +179,9 @@ if analyze_button:
         else:
             obv_trend = "⚪ 資料不足無法計算"
 
-        # =========================================================
-        # 5. Prophet 模型預測
-        # =========================================================
+        # ------------------------------------------
+        # 5. Prophet AI 預測模型 (已排除週末失真)
+        # ------------------------------------------
         df = stock_data.reset_index()
         df['Date'] = df['Date'].dt.tz_localize(None)
         df_prophet = df[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'}).dropna()
@@ -188,15 +196,16 @@ if analyze_button:
         model.fit(df_prophet)
 
         future = model.make_future_dataframe(periods=30) 
-        future = future[future['ds'].dt.weekday < 5] 
+        future = future[future['ds'].dt.weekday < 5] # 剔除週末盲區
         forecast = model.predict(future)
 
+
         # =========================================================
-        # 🟢 輸出畫面：圖表區
+        # 🟢 輸出畫面區塊
         # =========================================================
-        st.subheader("📊 AI 趨勢預測圖")
         
-        # 🛠️ 防呆優化 5：安全繪圖，避免 Matplotlib 產生執行緒衝突
+        # --- 圖表區 (執行緒安全版) ---
+        st.subheader("📊 AI 趨勢預測圖")
         fig1, ax = plt.subplots(figsize=(10, 5))
         model.plot(forecast, ax=ax)
         
@@ -211,16 +220,13 @@ if analyze_button:
         ax.legend(handles=[black_dot, blue_line, light_blue_patch], loc='best', fontsize=9, framealpha=0.9, edgecolor='gray')
 
         plt.title(f'{display_name} 股價 AI 預測與趨勢分析', fontsize=14, fontweight='bold')
-        plt.xlabel('日期 (Month / Day)', fontsize=12)
-        plt.ylabel('股價 (Price)', fontsize=12)
-        
+        plt.xlabel('日期', fontsize=12)
+        plt.ylabel('股價', fontsize=12)
         ax.grid(which='major', color='gray', linestyle='-', alpha=0.4)
         ax.grid(which='minor', color='gray', linestyle=':', alpha=0.15)
         st.pyplot(fig1)
 
-        # =========================================================
-        # 🟢 輸出畫面：決策指揮中心報告
-        # =========================================================
+        # --- 數據報告區 ---
         st.markdown("---")
         st.subheader("📄 決策指揮中心報告")
         
@@ -241,9 +247,7 @@ if analyze_button:
         st.write(f"- OBV 近五日動能：{obv_trend}")
         st.write(f"- 三大法人：{chip_text}")
             
-        # =========================================================
-        # 🟢 輸出畫面：AI 推演
-        # =========================================================
+        # --- 未來 5 日推演區 ---
         st.markdown("---")
         st.subheader("📈 AI 未來 5 個有效交易日推演")
         
@@ -254,7 +258,6 @@ if analyze_button:
         valid_days = 0
         day_mapping = {0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日'}
         
-        # 🛠️ 防呆優化 6：相容不同版本的 holidays 套件
         try:
             tw_holidays = holidays.country_holidays('TW', years=[datetime.now().year, datetime.now().year + 1])
         except:
@@ -265,7 +268,6 @@ if analyze_button:
             curr_date = row['ds']
             weekday = curr_date.weekday()
             
-            # 🛠️ 防呆優化 7：將 Timestamp 轉為純 date 格式，避免比對錯誤
             if curr_date.date() in tw_holidays: 
                 holiday_name = tw_holidays.get(curr_date.date())
                 st.warning(f"📅 **{curr_date.strftime('%Y-%m-%d')} ({day_mapping[weekday]})** | 🛑 今日休市 ({holiday_name})，暫無交易預測")
@@ -277,9 +279,7 @@ if analyze_button:
             st.info(f"📅 **{curr_date.strftime('%Y-%m-%d')} ({day_mapping[weekday]})** | 期望價: **${row['yhat']:.2f}** (區間: ${row['yhat_lower']:.2f} ~ ${row['yhat_upper']:.2f})")
             valid_days += 1
 
-        # =========================================================
-        # 🟢 輸出畫面：綜合策略建議
-        # =========================================================
+        # --- 策略總結區 ---
         st.markdown("---")
         st.subheader("💡 AI 操盤總結與策略建議")
         is_macro_good = macro_score >= 0 
@@ -303,9 +303,7 @@ if analyze_button:
         else:
             st.info(f"⚖️ **【多空交戰 / 震盪整理 - 區間操作或回歸基本面】**\n\n狀態：各項指標出現分歧。盤勢正處於方向選擇的過渡期。\n\n策略：雜訊較多，建議採取「區間高出低進」。若標的為 ETF，可檢視目前殖利率 ({yield_str}) 是否符合存股預期，採定期定額佈局；若想賺價差，建議縮手等待明確信號。")
             
-        # =========================================================
-        # 🟢 輸出畫面：完整新聞列表
-        # =========================================================
+        # --- 新聞區 ---
         st.markdown("---")
         st.subheader("📰 近期相關新聞")
         try:
