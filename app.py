@@ -73,7 +73,6 @@ if run_button:
         ticker = yf.Ticker(ticker_symbol, session=yf_session)
         stock_data = ticker.history(period="2y").reset_index()
         
-        # 過濾空值
         stock_data = stock_data.dropna(subset=['Close'])
         
         if stock_data.empty:
@@ -82,29 +81,22 @@ if run_button:
 
         stock_data['Date'] = stock_data['Date'].dt.tz_localize(None).dt.normalize()
         
-        # 🌟 終極收盤價抓取邏輯 (解決 yfinance 台股延遲與假資料問題)
         current_price = None
-        
-        # 方法 A: 強制抓取即時報價字典 (不受歷史線圖延遲影響)
         try:
             info = ticker.info
             current_price = info.get('currentPrice') or info.get('regularMarketPrice')
         except:
             pass
             
-        # 方法 B: 嘗試 fast_info 即時快照
         if not current_price or pd.isna(current_price):
             try:
                 current_price = ticker.fast_info.last_price
             except:
                 pass
                 
-        # 方法 C: 退回使用歷史線圖最後一筆
         if not current_price or pd.isna(current_price):
             current_price = stock_data['Close'].iloc[-1]
 
-        # 🔧 關鍵修正：將抓到的「真實即時市價」強制覆蓋到歷史資料表的最後一筆
-        # 這樣不僅網頁顯示正確，連 AI 模型 (Prophet) 預測的基準點也會被校正！
         stock_data.iloc[-1, stock_data.columns.get_loc('Close')] = current_price
 
         stock_id = ticker_symbol.replace(".TW", "").replace(".TWO", "")
@@ -137,9 +129,15 @@ if run_button:
         df_merged = pd.merge(stock_data, daily_chips, on='Date', how='left')
         df_merged['Net_Buy_K'] = df_merged['Net_Buy_K'].fillna(0)
 
-        # 3. NLP 新聞情緒分析 (SnowNLP)
+        # =========================================================
+        # 3. NLP 新聞情緒分析 (🌟 加入財經專屬字典強化判斷)
+        # =========================================================
         recent_news_sentiment = 0.5 
         news_display_text = []
+        
+        # 建立台股常見的利多/利空關鍵字庫
+        bullish_words = ['看好', '買超', '創新高', '爆發', '成長', '翻倍', '大漲', '上修', '優於預期', '雙增', '受惠', '利多', '漲停', '目標價', '創高', '回溫', '強勢', '拉貨', '滿載']
+        bearish_words = ['看壞', '賣超', '跌破', '衰退', '下修', '不如預期', '雙減', '利空', '跌停', '重挫', '跳水', '降評', '大跌', '出脫', '保守', '砍單', '疑慮']
 
         try:
             google_news = GNews(language='zh-Hant', country='TW', max_results=5)
@@ -152,15 +150,33 @@ if run_button:
                     title = news.get('title', '')
                     publisher = news.get('publisher', {}).get('title', '未知')
                     
-                    s = SnowNLP(title)
-                    score = s.sentiments 
-                    sentiment_scores.append(score)
+                    # A. 取得基礎 SnowNLP 分數
+                    try:
+                        base_score = SnowNLP(title).sentiments 
+                    except:
+                        base_score = 0.5
+                        
+                    # B. 財經字典權重覆蓋
+                    bull_hits = sum(1 for w in bullish_words if w in title)
+                    bear_hits = sum(1 for w in bearish_words if w in title)
                     
-                    if score > 0.65: emotion = "🟢 利多"
-                    elif score < 0.35: emotion = "🔴 利空"
+                    if bull_hits > bear_hits:
+                        # 只要有財經利多關鍵字，分數直接拉抬到 0.75 ~ 1.0 區間
+                        final_score = min(0.75 + (bull_hits * 0.1), 1.0)
+                    elif bear_hits > bull_hits:
+                        # 只要有財經利空關鍵字，分數直接下壓到 0.0 ~ 0.25 區間
+                        final_score = max(0.25 - (bear_hits * 0.1), 0.0)
+                    else:
+                        # 如果都沒有財經關鍵字，把 SnowNLP 偏激的分數往中間值 (0.5) 壓縮，避免誤判
+                        final_score = 0.4 + (base_score * 0.2)
+                        
+                    sentiment_scores.append(final_score)
+                    
+                    if final_score > 0.60: emotion = "🟢 利多"
+                    elif final_score < 0.40: emotion = "🔴 利空"
                     else: emotion = "⚖️ 中性"
                     
-                    news_display_text.append("{}. [{}] {} \n ➥ NLP 判定: {} (分數: {:.2f})".format(i, publisher, title, emotion, score))
+                    news_display_text.append("{}. [{}] {} \n ➥ AI 判定: {} (分數: {:.2f})".format(i, publisher, title, emotion, final_score))
                 
                 recent_news_sentiment = np.mean(sentiment_scores)
             else:
