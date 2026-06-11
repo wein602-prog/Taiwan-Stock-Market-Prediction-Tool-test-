@@ -19,6 +19,40 @@ import tempfile
 # 網頁基礎設定
 # ==========================================
 st.set_page_config(page_title="AI 股票決策指揮中心", page_icon="📈", layout="centered")
+
+# ------------------------------------------
+# 🌟 招財/大展鴻圖 視覺設計 (CSS 注入)
+# ------------------------------------------
+def set_wealth_background():
+    # 使用帶有金色/股市意象的背景圖，並疊加一層深色半透明遮罩(rgba)，確保白字依然清晰可見
+    # 右下角加入「大展鴻圖」的浮水印
+    page_bg_css = """
+    <style>
+    .stApp {
+        background-image: linear-gradient(rgba(17, 24, 39, 0.85), rgba(17, 24, 39, 0.85)), url("https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=2070&auto=format&fit=crop");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }
+    
+    .stApp::after {
+        content: '大展鴻圖 💰 招財進寶';
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        font-size: 28px;
+        color: rgba(255, 215, 0, 0.15); /* 淡淡的土豪金 */
+        font-weight: bold;
+        z-index: 100;
+        pointer-events: none; /* 確保浮水印不會阻擋滑鼠點擊 */
+        letter-spacing: 2px;
+    }
+    </style>
+    """
+    st.markdown(page_bg_css, unsafe_allow_html=True)
+
+set_wealth_background()
+
 st.title("📈 AI 股票預測與決策指揮中心")
 
 # ==========================================
@@ -71,9 +105,7 @@ load_font()
 # 📰 新聞情緒分析模組 (NLP Keyword-based)
 # ==========================================
 def analyze_news_sentiment(text):
-    # 台股常見利多關鍵字
     positive_keywords = ['看好', '成長', '創高', '大增', '買超', '利多', '突破', '上漲', '增長', '受惠', '升評', '調升', '雙增', '爆單', '強勁', '新高', '優於預期', '獲利', '配息', '大賺', '飆', '買盤', '利潤', '翻紅']
-    # 台股常見利空關鍵字
     negative_keywords = ['看淡', '衰退', '新低', '大減', '賣超', '利空', '跌破', '下跌', '減少', '受害', '降評', '調降', '雙減', '砍單', '疲弱', '不如預期', '虧損', '下修', '拋售', '逃命', '爆雷', '警戒', '外資倒貨']
     
     score = 0
@@ -86,6 +118,10 @@ def analyze_news_sentiment(text):
 # ==========================================
 # 側邊欄：使用者輸入區
 # ==========================================
+# 增加招財吉祥物
+st.sidebar.markdown("<h2 style='text-align: center;'>🐱 財源廣進 💰</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+
 st.sidebar.header("設定區")
 ticker_symbol = st.sidebar.text_input("請輸入股票代號 (例如: 2887.TW)", value="2887.TW")
 analyze_button = st.sidebar.button("🚀 開始分析")
