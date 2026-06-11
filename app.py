@@ -180,7 +180,7 @@ if analyze_button:
             obv_trend = "⚪ 資料不足無法計算"
 
         # ------------------------------------------
-        # 5. Prophet AI 預測模型 (已排除週末失真)
+        # 5. Prophet AI 預測模型 (已修復過度擬合問題)
         # ------------------------------------------
         df = stock_data.reset_index()
         df['Date'] = df['Date'].dt.tz_localize(None)
@@ -188,10 +188,10 @@ if analyze_button:
         
         model = Prophet(
             daily_seasonality=False, 
-            weekly_seasonality=False,     
-            yearly_seasonality=False,     
-            changepoint_prior_scale=0.15, 
-            changepoint_range=0.98        
+            weekly_seasonality=True,      # 開啟週季節性
+            yearly_seasonality=True,      # 開啟年季節性
+            changepoint_prior_scale=0.05, # 回調轉折點敏感度至預設值
+            changepoint_range=0.8         # 回調轉折點範圍至預設值
         )
         model.fit(df_prophet)
 
