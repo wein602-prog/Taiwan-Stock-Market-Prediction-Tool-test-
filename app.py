@@ -56,9 +56,14 @@ set_wealth_background()
 st.title("📈 AI 股票預測與決策指揮中心")
 
 # ==========================================
-# 📖 系統使用指南與說明 (折疊面板)
+# 🔐 核心優化：一打開必須先點選的強制導覽頁面
 # ==========================================
-with st.expander("ℹ️ 系統使用指南與說明 (點擊展開)", expanded=False):
+if "entered_system" not in st.session_state:
+    st.session_state.entered_system = False
+
+# 如果使用者尚未點擊同意進入，則鎖定主畫面並顯示指南說明
+if not st.session_state.entered_system:
+    st.markdown("<h2 style='color: #ffd700; text-align: center;'>ℹ️ 系統使用指南與說明</h2>", unsafe_allow_html=True)
     st.markdown("""
     **歡迎使用 AI 股票決策指揮中心！** 本系統整合技術面、基本面、籌碼面與消息面，為您提供全方位的投資參考。
     
@@ -74,6 +79,22 @@ with st.expander("ℹ️ 系統使用指南與說明 (點擊展開)", expanded=F
     
     > ⚠️ **免責聲明**：本系統之 AI 預測與策略建議僅供學術研究與參考之用，不構成任何實質買賣建議。金融市場變幻莫測，投資人應自行謹慎評估風險並自負盈虧。
     """)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    # 強制點擊按鈕才能解鎖系統
+    if st.button("🚀 我已閱讀並瞭解，進入 AI 決策指揮中心", use_container_width=True):
+        st.session_state.entered_system = True
+        st.rerun()
+        
+    # 在未解鎖前，仍先繪製包含新文字的側邊欄，確保視覺一致，但主程式會在這裡中斷
+    st.sidebar.markdown("<h2 style='text-align: center;'>🐱 財源廣進 💰</h2>", unsafe_allow_html=True)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("<div style='text-align: center;'>國立高雄大學<br>在職碩專班(一年級)<br>L1145102 陳韋豪</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("---")
+    # 🌟 新增的報告專用提醒字樣
+    st.sidebar.markdown("<div style='text-align: center; color: #ff4b4b; font-weight: bold; background-color: rgba(255,75,75,0.15); padding: 10px; border-radius: 5px; border: 1px solid #ff4b4b;'>⚠️ 僅巨量分析期末報告使用</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("---")
+    st.stop()
 
 # ==========================================
 # 🛠️ 核心優化：安全寫入中文字型
@@ -116,19 +137,28 @@ def analyze_news_sentiment(text):
     return score
 
 # ==========================================
-# 側邊欄：使用者輸入區
+# 側邊欄：使用者輸入區 (已解鎖狀態)
 # ==========================================
-# 增加招財吉祥物
 st.sidebar.markdown("<h2 style='text-align: center;'>🐱 財源廣進 💰</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# 🌟 新增使用者資訊 (居中顯示)
 st.sidebar.markdown("<div style='text-align: center;'>國立高雄大學<br>在職碩專班(一年級)<br>L1145102 陳韋豪</div>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+
+# 🌟 新增的報告專用提醒字樣
+st.sidebar.markdown("<div style='text-align: center; color: #ff4b4b; font-weight: bold; background-color: rgba(255,75,75,0.15); padding: 10px; border-radius: 5px; border: 1px solid #ff4b4b;'>⚠️ 僅巨量分析期末報告使用</div>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 st.sidebar.header("設定區")
 ticker_symbol = st.sidebar.text_input("請輸入股票代號 (例如: 2887.TW)", value="2887.TW")
 analyze_button = st.sidebar.button("🚀 開始分析")
+
+# 同時保留一個小提示，方便進入系統後若忘記操作仍可隨時點閱
+with st.expander("ℹ️ 系統使用指南與說明 (點擊展開)", expanded=False):
+    st.markdown("""
+    * **輸入代號**：在左側設定區輸入您想查詢的台股代號（上市股票請加 `.TW`，上櫃請加 `.TWO`）。
+    * **開始分析**：點擊「🚀 開始分析」按鈕，系統將即時抓取最新數據並啟動 AI 運算模型。
+    """)
 
 # ==========================================
 # 主程式運算區塊
